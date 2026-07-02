@@ -1,0 +1,3 @@
+# Config for LatentBriefingHandoff (Ramp-style task-guided KV briefing).
+# TODO: fill in once handoff.latent_briefing is implemented.
+handoff: latent_briefing

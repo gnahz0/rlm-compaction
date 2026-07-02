@@ -1,0 +1,3 @@
+# Config for VanillaAMHandoff (unmodified Attention Matching compaction).
+# TODO: fill in once handoff.vanilla_am is implemented.
+handoff: vanilla_am

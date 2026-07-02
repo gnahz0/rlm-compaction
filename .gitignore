@@ -1,0 +1,13 @@
+# Temporary reference copies of external repos (see README External Code section).
+# Extract only what you need into src/rlm_latent/compaction/, don't commit the full repo.
+external/
+
+__pycache__/
+*.pyc
+.DS_Store
+.vscode/
+.venv/
+*.egg-info/
+
+# Secrets -- never commit real keys.
+.env
