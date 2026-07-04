@@ -27,3 +27,9 @@ Modifications so far (trimming only — kept code is verbatim):
 - Trimmed the corresponding routing branches in `clients/__init__.py`,
   `environments/__init__.py`, and the `ClientBackend`/`EnvironmentType`
   literals in `core/types.py`.
+
+Additions (ours, not upstream):
+
+- `clients/huggingface.py` — in-process transformers client (backend `"hf"`),
+  for local models with direct KV-cache access; registered in
+  `clients/__init__.py` and added to the `ClientBackend` literal.

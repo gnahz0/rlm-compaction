@@ -11,3 +11,6 @@ __pycache__/
 
 # Secrets -- never commit real keys.
 .env
+
+# Per-run trajectory logs from experiments/test_rlm.py.
+results/logs/

@@ -43,18 +43,19 @@ git clone https://github.com/alexzhang13/rlm.git external/rlm
 ## Setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+conda create -n rlm-comp python=3.12
+conda activate rlm-comp
 pip install -e .
 ```
 
-Create a `.env` at the repo root with `OPENAI_API_KEY=...` (and optionally `ANTHROPIC_API_KEY=...`). Keys are loaded from `.env` via `python-dotenv` — `.env` is gitignored, never committed. Don't export real keys inside `.venv` itself; it gets deleted/recreated and isn't meant to hold secrets.
+Create a `.env` at the repo root with `OPENAI_API_KEY=...` (and optionally `ANTHROPIC_API_KEY=...`). Keys are loaded from `.env` via `python-dotenv` — `.env` is gitignored, never committed. Don't export real keys inside the conda env itself; it gets deleted/recreated and isn't meant to hold secrets.
 
-Quick check that the RLM loop works (makes real API calls, ~1 cent):
+Quick check that the RLM loop works (defaults to local Qwen3-4B in-process; no API key needed):
 
 ```bash
-python experiments/smoke_test_rlm.py                  # gpt-5-mini by default
-RLM_MODEL=gpt-5 python experiments/smoke_test_rlm.py
+python experiments/test_rlm.py                        # built-in magic-number test
+python experiments/test_rlm.py "your own prompt"      # custom prompt
+python experiments/test_rlm.py --model gpt-5-mini     # API model (~1 cent)
 ```
 
 ## Status

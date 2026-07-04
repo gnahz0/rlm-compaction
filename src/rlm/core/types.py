@@ -7,6 +7,7 @@ ClientBackend = Literal[
     "openrouter",
     "vllm",
     "anthropic",
+    "hf",
 ]
 EnvironmentType = Literal["local"]
 

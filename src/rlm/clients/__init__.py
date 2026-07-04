@@ -36,7 +36,11 @@ def get_client(
         from rlm.clients.anthropic import AnthropicClient
 
         return AnthropicClient(**backend_kwargs)
+    elif backend == "hf":
+        from rlm.clients.huggingface import HuggingFaceClient
+
+        return HuggingFaceClient(**backend_kwargs)
     else:
         raise ValueError(
-            f"Unknown backend: {backend}. Supported backends: ['openai', 'vllm', 'openrouter', 'anthropic']"
+            f"Unknown backend: {backend}. Supported backends: ['openai', 'vllm', 'openrouter', 'anthropic', 'hf']"
         )
