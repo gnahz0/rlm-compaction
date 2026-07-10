@@ -8,6 +8,12 @@ dependencies = [
     "openai",
     "anthropic",
     "rich",
+    "torch",
+    "transformers",
+    "accelerate",
+    "huggingface_hub",
+    "tiktoken",
+    "datasets",
 ]
 
 [tool.setuptools.packages.find]

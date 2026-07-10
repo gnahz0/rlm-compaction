@@ -15,6 +15,7 @@ from typing import Any
 
 from rlm.core.comms_utils import LMRequest, send_lm_request, send_lm_request_batched
 from rlm.core.types import REPLResult, RLMChatCompletion
+from rlm.handoff import HandoffMethod, TextHandoff
 from rlm.environments.base_env import (
     RESERVED_TOOL_NAMES,
     NonIsolatedEnv,
@@ -162,6 +163,7 @@ class LocalREPL(NonIsolatedEnv):
         custom_sub_tools: dict[str, Any] | None = None,
         compaction: bool = False,
         max_concurrent_subcalls: int = 4,
+        handoff: HandoffMethod | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -173,6 +175,8 @@ class LocalREPL(NonIsolatedEnv):
 
         self.lm_handler_address = lm_handler_address
         self.subcall_fn = subcall_fn  # Callback for recursive RLM calls (depth > 1 support)
+        # How llm_query hands the worker its context (text verbatim by default).
+        self.handoff: HandoffMethod = handoff or TextHandoff()
         self.original_cwd = os.getcwd()
         self.temp_dir = tempfile.mkdtemp(prefix=f"repl_env_{uuid.uuid4()}_")
         self._lock = threading.Lock()
@@ -255,10 +259,12 @@ class LocalREPL(NonIsolatedEnv):
             return "No variables created yet. Use ```repl``` blocks to create variables."
         return f"Available variables: {available}"
 
-    def _llm_query(self, prompt: str, model: str | None = None) -> str:
-        """Query the LM with a single plain completion (no REPL, no recursion).
+    def _call_worker(self, prompt: str, model: str | None = None) -> str:
+        """Primitive: one plain-text worker completion via the LM handler.
 
-        This always makes a direct LM call via the handler, regardless of depth.
+        This is the raw socket call handoff methods build on. It always makes a
+        direct LM call via the handler, regardless of depth (no REPL, no
+        recursion).
 
         Args:
             prompt: The prompt to send to the LM.
@@ -279,17 +285,9 @@ class LocalREPL(NonIsolatedEnv):
         except Exception as e:
             return f"Error: LM query failed - {e}"
 
-    def _llm_query_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
-        """Query the LM with multiple prompts concurrently (no REPL, no recursion).
-
-        This always makes direct LM calls via the handler, regardless of depth.
-
-        Args:
-            prompts: List of prompts to send to the LM.
-            model: Optional model name to use (if handler has multiple clients).
-
-        Returns:
-            List of responses in the same order as input prompts.
+    def _call_worker_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
+        """Primitive: many plain-text worker completions concurrently via the
+        handler. Responses are returned in input order.
         """
         if not self.lm_handler_address:
             return ["Error: No LM handler configured"] * len(prompts)
@@ -309,6 +307,19 @@ class LocalREPL(NonIsolatedEnv):
             return results
         except Exception as e:
             return [f"Error: LM query failed - {e}"] * len(prompts)
+
+    def _llm_query(self, prompt: str, model: str | None = None) -> str:
+        """Worker query, routed through the configured handoff method.
+
+        The handoff decides how the context reaches the worker (verbatim for
+        TextHandoff, compressed for SummaryHandoff); the actual LM call goes
+        through ``_call_worker``.
+        """
+        return self.handoff.run(prompt, model, self._call_worker)
+
+    def _llm_query_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
+        """Batched worker query, routed through the configured handoff method."""
+        return self.handoff.run_batched(prompts, model, self._call_worker_batched)
 
     def _rlm_query(self, prompt: str, model: str | None = None) -> str:
         """Spawn a recursive RLM sub-call for deeper thinking on a subtask.

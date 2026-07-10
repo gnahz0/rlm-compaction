@@ -51,12 +51,9 @@ class HuggingFaceClient(BaseLM):
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        # "auto" = the model's native dtype (bf16 for Qwen3, its training
-        # precision — fp16 can overflow). Pass dtype="float16"/"float32" to
-        # override explicitly.
-        if dtype == "auto":
-            dtype = torch.bfloat16 if torch.backends.mps.is_available() else "auto"
-        else:
+        # "auto" = the model's native dtype. Pass dtype="float16"/"float32"
+        # to override explicitly.
+        if dtype != "auto":
             dtype = getattr(torch, dtype)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -76,6 +73,7 @@ class HuggingFaceClient(BaseLM):
         self.model_call_counts: dict[str, int] = defaultdict(int)
         self.model_input_tokens: dict[str, int] = defaultdict(int)
         self.model_output_tokens: dict[str, int] = defaultdict(int)
+        self.model_total_tokens: dict[str, int] = defaultdict(int)
         self.last_prompt_tokens: int = 0
         self.last_completion_tokens: int = 0
 
@@ -89,71 +87,63 @@ class HuggingFaceClient(BaseLM):
         else:
             raise ValueError(f"Invalid prompt type: {type(prompt)}")
 
-        input_ids = self.tokenizer.apply_chat_template(
+        model = model or self.model_name
+        if not model:
+            raise ValueError("Model name is required for HuggingFace client.")
+
+        text = self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
-            return_tensors="pt",
+            tokenize=False,
             **self.chat_template_kwargs,
-        ).to(self.model.device)
+        )
+        encoded = self.tokenizer(text, return_tensors="pt").to(self.model.device)
+        prompt_tokens = encoded["input_ids"].shape[1]
 
         sampling = dict(self.sampling_args)
         max_new_tokens = sampling.pop("max_tokens", None) or self.max_new_tokens
 
-        # Start from the recommended settings for the active thinking mode,
-        # fall back to the model's own generation_config if the mode is unset,
-        # then apply the caller's explicit sampling_args on top.
         thinking = self.chat_template_kwargs.get("enable_thinking")
         gen_kwargs: dict[str, Any] = dict(SAMPLING_BY_THINKING_MODE.get(thinking, {}))
-        if sampling.get("temperature") is not None:
-            if sampling["temperature"] == 0:
+        temperature = sampling.get("temperature")
+        if temperature is not None:
+            if temperature == 0:
                 gen_kwargs = {"do_sample": False}
             else:
-                gen_kwargs["do_sample"] = True
-                gen_kwargs["temperature"] = sampling["temperature"]
+                gen_kwargs.update(do_sample=True, temperature=temperature)
         for key in ("top_p", "top_k", "min_p", "repetition_penalty"):
             if sampling.get(key) is not None:
                 gen_kwargs[key] = sampling[key]
 
         with self._generate_lock, torch.no_grad():
-            try:
-                output_ids = self.model.generate(
-                    input_ids,
-                    attention_mask=torch.ones_like(input_ids),
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                    **gen_kwargs,
-                )
-            except RuntimeError as e:
-                if "probability tensor" not in str(e):
-                    raise
-                # Sporadic NaN logits under sampling (seen on MPS): retry this
-                # one call greedily instead of killing the whole RLM run.
-                output_ids = self.model.generate(
-                    input_ids,
-                    attention_mask=torch.ones_like(input_ids),
-                    max_new_tokens=max_new_tokens,
-                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                    do_sample=False,
-                )
+            output_ids = self.model.generate(
+                encoded["input_ids"],
+                attention_mask=encoded["attention_mask"],
+                max_new_tokens=max_new_tokens,
+                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                **gen_kwargs,
+            )
 
-        completion_ids = output_ids[0, input_ids.shape[1] :]
-        text = self.tokenizer.decode(completion_ids, skip_special_tokens=True)
-        # Qwen3 emits an (empty, with enable_thinking=False) think block first.
-        if "</think>" in text:
-            text = text.split("</think>", 1)[1]
-        text = text.strip()
+        completion_ids = output_ids[0, prompt_tokens:]
+        response = self.tokenizer.decode(completion_ids, skip_special_tokens=True)
+        # Qwen3 emits a think block before the answer.
+        response = response.split("</think>", 1)[-1].strip()
 
-        model = model or self.model_name
-        self.model_call_counts[model] += 1
-        self.model_input_tokens[model] += input_ids.shape[1]
-        self.model_output_tokens[model] += len(completion_ids)
-        self.last_prompt_tokens = input_ids.shape[1]
-        self.last_completion_tokens = len(completion_ids)
-
-        return text
+        self._track_cost(model, prompt_tokens, completion_ids.shape[0])
+        return response
 
     async def acompletion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
         return await asyncio.to_thread(self.completion, prompt, model)
+
+    def _track_cost(self, model: str, prompt_tokens: int, completion_tokens: int):
+        self.model_call_counts[model] += 1
+        self.model_input_tokens[model] += prompt_tokens
+        self.model_output_tokens[model] += completion_tokens
+        self.model_total_tokens[model] += prompt_tokens + completion_tokens
+
+        # Track last call for handler to read
+        self.last_prompt_tokens = prompt_tokens
+        self.last_completion_tokens = completion_tokens
 
     def get_usage_summary(self) -> UsageSummary:
         model_summaries = {}

@@ -28,6 +28,16 @@ Modifications so far (trimming only — kept code is verbatim):
   `environments/__init__.py`, and the `ClientBackend`/`EnvironmentType`
   literals in `core/types.py`.
 
+Behavioral modifications (wiring in our `handoff/` seam):
+
+- `environments/local_repl.py` — split the old `_llm_query`/`_llm_query_batched`
+  socket calls into `_call_worker`/`_call_worker_batched` primitives, and made
+  `_llm_query`/`_llm_query_batched` route through a `HandoffMethod` (new
+  `handoff` ctor arg, defaults to `TextHandoff` = original verbatim behavior).
+- `core/rlm.py` — added `handoff` / `handoff_kwargs` ctor args, resolved via
+  `get_handoff(...)` into `env_kwargs["handoff"]` in `_spawn_completion_context`
+  (local env only). Default `"text"` reproduces upstream behavior exactly.
+
 Additions (ours, not upstream):
 
 - `clients/huggingface.py` — in-process transformers client (backend `"hf"`),

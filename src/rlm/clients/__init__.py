@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from dotenv import load_dotenv
@@ -6,6 +7,12 @@ from rlm.clients.base_lm import BaseLM
 from rlm.core.types import ClientBackend
 
 load_dotenv()
+
+# Loading a HuggingFace model reads GBs of weights from disk. The RLM loop calls
+# get_client() once per completion, so without caching the same local model is
+# reloaded for every example. Reuse a client when the backend_kwargs are
+# identical (same model, dtype, sampling, etc.); differing kwargs get a fresh one.
+_HF_CLIENT_CACHE: dict[str, BaseLM] = {}
 
 
 def get_client(
@@ -39,7 +46,12 @@ def get_client(
     elif backend == "hf":
         from rlm.clients.huggingface import HuggingFaceClient
 
-        return HuggingFaceClient(**backend_kwargs)
+        cache_key = json.dumps(backend_kwargs, sort_keys=True, default=str)
+        client = _HF_CLIENT_CACHE.get(cache_key)
+        if client is None:
+            client = HuggingFaceClient(**backend_kwargs)
+            _HF_CLIENT_CACHE[cache_key] = client
+        return client
     else:
         raise ValueError(
             f"Unknown backend: {backend}. Supported backends: ['openai', 'vllm', 'openrouter', 'anthropic', 'hf']"

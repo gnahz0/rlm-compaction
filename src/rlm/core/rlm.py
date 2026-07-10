@@ -16,6 +16,7 @@ from rlm.core.types import (
     UsageSummary,
 )
 from rlm.environments import BaseEnv, SupportsPersistence, get_environment
+from rlm.handoff import HandoffMethod, HandoffType, get_handoff
 from rlm.logger import RLMLogger, VerbosePrinter
 from rlm.utils.exceptions import (
     BudgetExceededError,
@@ -78,6 +79,8 @@ class RLM:
         sub_sampling_args: dict[str, Any] | None = None,
         orchestrator: bool = True,
         user_prologue: str | None = None,
+        handoff: "HandoffType | HandoffMethod" = "text",
+        handoff_kwargs: dict[str, Any] | None = None,
     ):
         """
         Args:
@@ -112,6 +115,12 @@ class RLM:
             on_subcall_complete: Callback fired when a child RLM completes. Args: (depth, model, duration, error_or_none).
             on_iteration_start: Callback fired when an iteration starts. Args: (depth, iteration_num).
             on_iteration_complete: Callback fired when an iteration completes. Args: (depth, iteration_num, duration).
+            handoff: How the orchestrator hands context to workers on llm_query calls.
+                "text" (default) passes the query verbatim (baseline RLM); "summary"
+                compresses it with an LM pass first. May also be a HandoffMethod instance.
+            handoff_kwargs: Kwargs for the handoff method when selected by name
+                (e.g. {"summary_model": "gpt-5-mini"} for "summary"). Ignored if
+                handoff is already a HandoffMethod instance.
         """
         # Sampling args plumbed into backend_kwargs / other_backend_kwargs
         # before the clients are constructed, so they reach the chat-completions
@@ -163,6 +172,11 @@ class RLM:
         self.compaction = compaction
         self.compaction_threshold_pct = compaction_threshold_pct
         self.max_concurrent_subcalls = max_concurrent_subcalls
+
+        # Orchestrator->worker handoff method (resolved per-completion so a
+        # single string selector works across spawned environments).
+        self.handoff = handoff
+        self.handoff_kwargs = handoff_kwargs
 
         self.depth = depth
         self.max_depth = max_depth
@@ -284,6 +298,9 @@ class RLM:
                 env_kwargs["custom_sub_tools"] = self.custom_sub_tools
             if self.compaction and self.environment_type in ("local", "docker"):
                 env_kwargs["compaction"] = True
+            # Resolve the handoff selector to an instance for this environment.
+            if self.environment_type == "local":
+                env_kwargs["handoff"] = get_handoff(self.handoff, self.handoff_kwargs)
             env_kwargs["max_concurrent_subcalls"] = self.max_concurrent_subcalls
             environment: BaseEnv = get_environment(self.environment_type, env_kwargs)
 
