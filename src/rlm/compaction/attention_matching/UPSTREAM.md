@@ -1,17 +1,19 @@
-Extracted from:
-https://github.com/adamzweiger/compaction
+# Provenance
 
-Original commit:
-<TODO: fill in commit hash used>
+Source: https://github.com/adamzweiger/compaction (vendored at
+`external/attention-matching/`; no upstream commit hash recorded).
 
-Copied components:
-- <TODO: e.g. AM solver core>
-- <TODO: e.g. KV cache extraction utilities>
-- <TODO: e.g. model-specific cache conversion utilities>
+**Verbatim** (byte-for-byte, relative imports intact):
 
-Excluded:
-- eval scripts
-- datasets
-- notebooks
-- plotting
-- paper reproduction harness
+- `algorithms/` ← `compaction/algorithms/` — the whole directory (base, batched,
+  highest_attention_keys, omp*, optim*, random_*, truncate, kvmerger). Self-contained:
+  every file imports only `torch` and its siblings.
+
+**Ours:**
+
+- `cache_utils.py` — compacts a transformers `DynamicCache` per (layer, head).
+- `task_scoring.py` — task-guided probe queries (upstream uses `query_generation/`).
+
+**Not vendored:** `compaction_methods/` orchestration, `query_generation/`, `models/`
+(`CompactedPrefixCache`, generation), eval harness, datasets, plotting, head-budget
+optimization.

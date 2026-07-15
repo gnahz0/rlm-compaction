@@ -13,15 +13,6 @@ from typing import Any
 from rlm.clients.base_lm import BaseLM
 from rlm.core.types import ModelUsageSummary, UsageSummary
 
-# Qwen3 model-card sampling recommendations, keyed by thinking mode.
-# Greedy decoding degrades Qwen3 into endless repetition, so both modes sample.
-# (presence_penalty is an API-server knob; the HF-generate analogue for taming
-# repetition is repetition_penalty, accepted via sampling_args.)
-SAMPLING_BY_THINKING_MODE = {
-    True: {"do_sample": True, "temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0},
-    False: {"do_sample": True, "temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0},
-}
-
 
 class HuggingFaceClient(BaseLM):
     """
@@ -31,7 +22,7 @@ class HuggingFaceClient(BaseLM):
         model_name: HF hub id or local path (e.g. "Qwen/Qwen3-4B").
         max_new_tokens: generation cap per call (overridable via sampling_args).
         chat_template_kwargs: extra kwargs for tokenizer.apply_chat_template.
-            Defaults to {"enable_thinking": False} — used by Qwen3's template,
+            Defaults to {"enable_thinking": True} — used by Qwen3's template,
             silently ignored by templates that don't have the variable.
     """
 
@@ -63,8 +54,11 @@ class HuggingFaceClient(BaseLM):
         self.model.eval()
 
         self.max_new_tokens = max_new_tokens
+        # Thinking mode ON by default, matching FullKVHandoff: Qwen3 answers
+        # better with CoT, and the text/KV workers must share the same mode to be
+        # comparable. Pass chat_template_kwargs={"enable_thinking": False} to opt out.
         self.chat_template_kwargs = (
-            {"enable_thinking": False} if chat_template_kwargs is None else chat_template_kwargs
+            {"enable_thinking": True} if chat_template_kwargs is None else chat_template_kwargs
         )
         # model.generate is not thread-safe; the LM handler serves concurrent requests.
         self._generate_lock = threading.Lock()
@@ -103,25 +97,15 @@ class HuggingFaceClient(BaseLM):
         sampling = dict(self.sampling_args)
         max_new_tokens = sampling.pop("max_tokens", None) or self.max_new_tokens
 
-        thinking = self.chat_template_kwargs.get("enable_thinking")
-        gen_kwargs: dict[str, Any] = dict(SAMPLING_BY_THINKING_MODE.get(thinking, {}))
-        temperature = sampling.get("temperature")
-        if temperature is not None:
-            if temperature == 0:
-                gen_kwargs = {"do_sample": False}
-            else:
-                gen_kwargs.update(do_sample=True, temperature=temperature)
-        for key in ("top_p", "top_k", "min_p", "repetition_penalty"):
-            if sampling.get(key) is not None:
-                gen_kwargs[key] = sampling[key]
-
+        # Pass sampling args through as-is; when empty, generate() falls back to
+        # the model's generation_config (Qwen3 ships sensible sampling defaults).
         with self._generate_lock, torch.no_grad():
             output_ids = self.model.generate(
                 encoded["input_ids"],
                 attention_mask=encoded["attention_mask"],
                 max_new_tokens=max_new_tokens,
                 pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                **gen_kwargs,
+                **sampling,
             )
 
         completion_ids = output_ids[0, prompt_tokens:]

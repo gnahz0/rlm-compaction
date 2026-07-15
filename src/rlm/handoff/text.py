@@ -1,14 +1,16 @@
-"""TextHandoff: baseline RLM handoff -- passes the orchestrator's query to the
-worker verbatim. This is exactly the upstream ``llm_query`` behavior, now
-expressed through the swappable HandoffMethod interface. It is the fidelity
-ceiling (nothing is dropped) and the token-cost baseline the compression
-methods are measured against.
+"""TextHandoff: THIS IS WHAT BASIC RLM DOES -- pass the orchestrator's query to
+the worker verbatim over the text socket. It is exactly the upstream ``llm_query``
+behavior, expressed through the swappable Handoff interface, and it's the
+fidelity ceiling (nothing dropped) + token-cost baseline the KV methods are
+measured against.
 """
 
-from rlm.handoff.base import HandoffMethod, Send, SendBatched
+from rlm.handoff.base import Handoff, Send, SendBatched
 
 
-class TextHandoff(HandoffMethod):
+class TextHandoff(Handoff):
+    """Text seam (requires_model=False by default): pass the query verbatim."""
+
     def run(self, prompt: str, model: str | None, send: Send) -> str:
         return send(prompt, model)
 

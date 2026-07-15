@@ -46,6 +46,12 @@ def main() -> None:
     )
     parser.add_argument("--base-url", help="OpenAI-compatible server URL (required for --backend vllm)")
     parser.add_argument("--thinking", action="store_true", help="enable Qwen3 thinking mode (hf backend only; slower, emits <think> CoT)")
+    parser.add_argument(
+        "--handoff",
+        default="text",
+        choices=["text", "full_kv", "latent_briefing"],
+        help="how the orchestrator hands context to workers ('full_kv' needs --backend hf)",
+    )
     parser.add_argument("--max-iterations", type=int, default=8)
     parser.add_argument("--max-depth", type=int, default=1, help="recursion depth; at max depth calls fall back to plain LM completion")
     parser.add_argument("--log-dir", default="results/logs", help="trajectory JSONL output dir ('' to disable)")
@@ -63,6 +69,7 @@ def main() -> None:
         backend=backend,
         backend_kwargs=backend_kwargs,
         environment="local",
+        handoff=args.handoff,
         max_iterations=args.max_iterations,
         max_depth=args.max_depth,
         logger=logger,

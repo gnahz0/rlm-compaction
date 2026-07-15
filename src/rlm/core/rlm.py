@@ -16,7 +16,7 @@ from rlm.core.types import (
     UsageSummary,
 )
 from rlm.environments import BaseEnv, SupportsPersistence, get_environment
-from rlm.handoff import HandoffMethod, HandoffType, get_handoff
+from rlm.handoff import Handoff, HandoffType, get_handoff, is_kv_handoff
 from rlm.logger import RLMLogger, VerbosePrinter
 from rlm.utils.exceptions import (
     BudgetExceededError,
@@ -79,7 +79,7 @@ class RLM:
         sub_sampling_args: dict[str, Any] | None = None,
         orchestrator: bool = True,
         user_prologue: str | None = None,
-        handoff: "HandoffType | HandoffMethod" = "text",
+        handoff: "HandoffType | Handoff" = "text",
         handoff_kwargs: dict[str, Any] | None = None,
     ):
         """
@@ -116,11 +116,11 @@ class RLM:
             on_iteration_start: Callback fired when an iteration starts. Args: (depth, iteration_num).
             on_iteration_complete: Callback fired when an iteration completes. Args: (depth, iteration_num, duration).
             handoff: How the orchestrator hands context to workers on llm_query calls.
-                "text" (default) passes the query verbatim (baseline RLM); "summary"
-                compresses it with an LM pass first. May also be a HandoffMethod instance.
-            handoff_kwargs: Kwargs for the handoff method when selected by name
-                (e.g. {"summary_model": "gpt-5-mini"} for "summary"). Ignored if
-                handoff is already a HandoffMethod instance.
+                "text" (default) passes the query verbatim (baseline RLM); "full_kv"
+                hands over a prefilled KV cache (needs the hf backend). May also be a
+                Handoff instance.
+            handoff_kwargs: Kwargs for the handoff method when selected by name.
+                Ignored if handoff is already an instance.
         """
         # Sampling args plumbed into backend_kwargs / other_backend_kwargs
         # before the clients are constructed, so they reach the chat-completions
@@ -299,8 +299,21 @@ class RLM:
             if self.compaction and self.environment_type in ("local", "docker"):
                 env_kwargs["compaction"] = True
             # Resolve the handoff selector to an instance for this environment.
+            # KV handoffs need the in-process model/tokenizer (only the hf
+            # backend exposes them); text handoffs ignore these.
             if self.environment_type == "local":
-                env_kwargs["handoff"] = get_handoff(self.handoff, self.handoff_kwargs)
+                kv_model = kv_tokenizer = None
+                if is_kv_handoff(self.handoff):
+                    kv_model = getattr(client, "model", None)
+                    kv_tokenizer = getattr(client, "tokenizer", None)
+                    if kv_model is None or kv_tokenizer is None:
+                        raise ValueError(
+                            f"Handoff {self.handoff!r} is KV-based and requires the 'hf' "
+                            f"backend (in-process model); got backend {self.backend!r}."
+                        )
+                env_kwargs["handoff"] = get_handoff(
+                    self.handoff, self.handoff_kwargs, model=kv_model, tokenizer=kv_tokenizer
+                )
             env_kwargs["max_concurrent_subcalls"] = self.max_concurrent_subcalls
             environment: BaseEnv = get_environment(self.environment_type, env_kwargs)
 

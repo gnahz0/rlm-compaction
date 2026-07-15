@@ -16,7 +16,7 @@ src/rlm/
   utils/        # prompts, parsing, exceptions, token utils
   # ours:
   handoff/      # swappable ways to pass context from orchestrator to worker
-                # (text, summary, vanilla_am, latent_briefing)
+                # (text, full_kv, latent_briefing)
   compaction/   # low-level KV/text compression methods (e.g. attention_matching)
 
 experiments/    # smoke tests + handoff comparison scripts

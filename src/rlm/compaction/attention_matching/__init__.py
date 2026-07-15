@@ -1,7 +1,20 @@
-"""attention_matching: minimal extracted core of Attention Matching KV compaction.
+"""Attention Matching KV-cache compaction. See README.md and UPSTREAM.md."""
 
-See UPSTREAM.md for provenance. Only the pieces needed by our handoffs live
-here -- eval scripts, datasets, notebooks, and plotting are intentionally
-left out of this package (see external/attention-matching for the full
-reference implementation).
-"""
+from rlm.compaction.attention_matching.algorithms import (
+    ALGORITHM_REGISTRY,
+    CompactionAlgorithm,
+    HighestAttentionKeysCompaction,
+    evaluate_compaction,
+)
+from rlm.compaction.attention_matching.cache_utils import compact_cache, sample_probe_queries
+from rlm.compaction.attention_matching.task_scoring import extract_task_queries
+
+__all__ = [
+    "ALGORITHM_REGISTRY",
+    "CompactionAlgorithm",
+    "HighestAttentionKeysCompaction",
+    "evaluate_compaction",
+    "compact_cache",
+    "sample_probe_queries",
+    "extract_task_queries",
+]

@@ -15,7 +15,7 @@ from typing import Any
 
 from rlm.core.comms_utils import LMRequest, send_lm_request, send_lm_request_batched
 from rlm.core.types import REPLResult, RLMChatCompletion
-from rlm.handoff import HandoffMethod, TextHandoff
+from rlm.handoff import Handoff, TextHandoff
 from rlm.environments.base_env import (
     RESERVED_TOOL_NAMES,
     NonIsolatedEnv,
@@ -163,7 +163,7 @@ class LocalREPL(NonIsolatedEnv):
         custom_sub_tools: dict[str, Any] | None = None,
         compaction: bool = False,
         max_concurrent_subcalls: int = 4,
-        handoff: HandoffMethod | None = None,
+        handoff: "Handoff | None" = None,
         **kwargs,
     ):
         super().__init__(
@@ -176,7 +176,9 @@ class LocalREPL(NonIsolatedEnv):
         self.lm_handler_address = lm_handler_address
         self.subcall_fn = subcall_fn  # Callback for recursive RLM calls (depth > 1 support)
         # How llm_query hands the worker its context (text verbatim by default).
-        self.handoff: HandoffMethod = handoff or TextHandoff()
+        self.handoff: Handoff = handoff or TextHandoff()
+        # KV handoffs: the prefilled context cache, built lazily and reused.
+        self._prepared_context: Any = None
         self.original_cwd = os.getcwd()
         self.temp_dir = tempfile.mkdtemp(prefix=f"repl_env_{uuid.uuid4()}_")
         self._lock = threading.Lock()
@@ -308,17 +310,37 @@ class LocalREPL(NonIsolatedEnv):
         except Exception as e:
             return [f"Error: LM query failed - {e}"] * len(prompts)
 
-    def _llm_query(self, prompt: str, model: str | None = None) -> str:
-        """Worker query, routed through the configured handoff method.
+    def _get_prepared_context(self) -> Any:
+        """Prefill the REPL `context` into a KV cache once (lazily), reuse after.
+        Invalidated by add_context. Returns None if there's no context."""
+        if self._prepared_context is None:
+            context = self.locals.get("context")
+            if context is None:
+                return None
+            if not isinstance(context, str):
+                context = "\n".join(context) if isinstance(context, list) else str(context)
+            self._prepared_context = self.handoff.prepare_context(context)
+        return self._prepared_context
 
-        The handoff decides how the context reaches the worker (verbatim for
-        TextHandoff, compressed for SummaryHandoff); the actual LM call goes
-        through ``_call_worker``.
+    def _llm_query(self, prompt: str, model: str | None = None) -> str:
+        """Worker query via the configured handoff. Text handoffs deliver the
+        prompt as a string through ``_call_worker``; KV handoffs run the worker
+        against the once-prefilled `context` prefix, with this prompt as the query.
         """
+        if self.handoff.requires_model:
+            prepared = self._get_prepared_context()
+            if prepared is None:
+                return "Error: KV handoff has no `context` to prefill"
+            return self.handoff.run_worker(prepared, prompt)
         return self.handoff.run(prompt, model, self._call_worker)
 
     def _llm_query_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
         """Batched worker query, routed through the configured handoff method."""
+        if self.handoff.requires_model:
+            prepared = self._get_prepared_context()
+            if prepared is None:
+                return ["Error: KV handoff has no `context` to prefill"] * len(prompts)
+            return self.handoff.run_workers(prepared, prompts)
         return self.handoff.run_batched(prompts, model, self._call_worker_batched)
 
     def _rlm_query(self, prompt: str, model: str | None = None) -> str:
@@ -447,6 +469,8 @@ class LocalREPL(NonIsolatedEnv):
             self.execute_code(f"context = {var_name}")
 
         self._context_count = max(self._context_count, context_index + 1)
+        # Context changed: drop any KV prefix so the next llm_query re-prefills.
+        self._prepared_context = None
         return context_index
 
     def update_handler_address(self, address: tuple[str, int]) -> None:
