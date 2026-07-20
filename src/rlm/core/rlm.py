@@ -81,6 +81,7 @@ class RLM:
         user_prologue: str | None = None,
         handoff: "HandoffType | Handoff" = "text",
         handoff_kwargs: dict[str, Any] | None = None,
+        allowed_models: list[str] | None = None,
     ):
         """
         Args:
@@ -177,6 +178,22 @@ class RLM:
         # single string selector works across spawned environments).
         self.handoff = handoff
         self.handoff_kwargs = handoff_kwargs
+        # Whitelist of model names that llm_query/rlm_query may target. Enforcement
+        # is always on: an explicit `model=` outside this list raises (in the REPL);
+        # `model=None` always resolves to the default. When not supplied, it
+        # defaults to the registered client model names (default + other_backends).
+        if allowed_models:
+            self.allowed_models = list(allowed_models)
+        else:
+            names: list[str] = []
+            default_model = (self.backend_kwargs or {}).get("model_name")
+            if default_model:
+                names.append(default_model)
+            for kw in self.other_backend_kwargs or []:
+                m = (kw or {}).get("model_name")
+                if m and m not in names:
+                    names.append(m)
+            self.allowed_models = names or None
 
         self.depth = depth
         self.max_depth = max_depth
@@ -314,6 +331,7 @@ class RLM:
                 env_kwargs["handoff"] = get_handoff(
                     self.handoff, self.handoff_kwargs, model=kv_model, tokenizer=kv_tokenizer
                 )
+                env_kwargs["allowed_models"] = self.allowed_models
             env_kwargs["max_concurrent_subcalls"] = self.max_concurrent_subcalls
             environment: BaseEnv = get_environment(self.environment_type, env_kwargs)
 
@@ -337,12 +355,15 @@ class RLM:
         up the initial message history.
         """
         metadata = QueryMetadata(prompt)
+        # Advertise the allowed `model=` names (enforced in the REPL) so the model
+        # uses valid identifiers instead of inventing ones like "gpt-4".
         message_history = build_rlm_system_prompt(
             system_prompt=self.system_prompt,
             query_metadata=metadata,
             custom_tools=self.custom_tools,
             root_prompt=root_prompt,
             orchestrator=self.orchestrator,
+            available_models=self.allowed_models,
         )
         if self.user_prologue:
             message_history.append({"role": "user", "content": self.user_prologue})

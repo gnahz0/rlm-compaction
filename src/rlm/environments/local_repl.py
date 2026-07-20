@@ -164,6 +164,7 @@ class LocalREPL(NonIsolatedEnv):
         compaction: bool = False,
         max_concurrent_subcalls: int = 4,
         handoff: "Handoff | None" = None,
+        allowed_models: list[str] | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -177,6 +178,8 @@ class LocalREPL(NonIsolatedEnv):
         self.subcall_fn = subcall_fn  # Callback for recursive RLM calls (depth > 1 support)
         # How llm_query hands the worker its context (text verbatim by default).
         self.handoff: Handoff = handoff or TextHandoff()
+        # Optional whitelist of model names llm_query/rlm_query may target.
+        self.allowed_models: list[str] | None = list(allowed_models) if allowed_models else None
         # KV handoffs: the prefilled context cache, built lazily and reused.
         self._prepared_context: Any = None
         self.original_cwd = os.getcwd()
@@ -322,11 +325,24 @@ class LocalREPL(NonIsolatedEnv):
             self._prepared_context = self.handoff.prepare_context(context)
         return self._prepared_context
 
+    def _check_model_allowed(self, model: str | None) -> None:
+        """Raise if a whitelist is configured and `model` is outside it.
+
+        ``model=None`` is always allowed (it resolves to the default client).
+        The ValueError surfaces to the calling model as REPL stderr.
+        """
+        if model is not None and self.allowed_models and model not in self.allowed_models:
+            raise ValueError(
+                f"model={model!r} is not an allowed model. Allowed: {self.allowed_models}. "
+                "Omit `model` (or pass model=None) to use the default."
+            )
+
     def _llm_query(self, prompt: str, model: str | None = None) -> str:
         """Worker query via the configured handoff. Text handoffs deliver the
         prompt as a string through ``_call_worker``; KV handoffs run the worker
         against the once-prefilled `context` prefix, with this prompt as the query.
         """
+        self._check_model_allowed(model)
         if self.handoff.requires_model:
             prepared = self._get_prepared_context()
             if prepared is None:
@@ -336,6 +352,7 @@ class LocalREPL(NonIsolatedEnv):
 
     def _llm_query_batched(self, prompts: list[str], model: str | None = None) -> list[str]:
         """Batched worker query, routed through the configured handoff method."""
+        self._check_model_allowed(model)
         if self.handoff.requires_model:
             prepared = self._get_prepared_context()
             if prepared is None:
@@ -354,6 +371,7 @@ class LocalREPL(NonIsolatedEnv):
             prompt: The prompt to send to the child RLM.
             model: Optional model name override for the child.
         """
+        self._check_model_allowed(model)
         if self.subcall_fn is not None:
             try:
                 completion = self.subcall_fn(prompt, model)
@@ -382,6 +400,7 @@ class LocalREPL(NonIsolatedEnv):
         Returns:
             List of responses in the same order as input prompts.
         """
+        self._check_model_allowed(model)
         if self.subcall_fn is not None:
             # For 0 or 1 prompts, no need for thread pool overhead
             if len(prompts) <= 1:

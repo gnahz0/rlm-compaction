@@ -214,6 +214,7 @@ def build_rlm_system_prompt(
     custom_tools: dict[str, Any] | None = None,
     root_prompt: str | None = None,
     orchestrator: bool = True,
+    available_models: list[str] | None = None,
 ) -> list[dict[str, str]]:
     from rlm.environments.base_env import format_tools_for_prompt
 
@@ -234,6 +235,14 @@ def build_rlm_system_prompt(
         f"{query_metadata.context_total_length} total characters. "
         "Each sub-LLM call can handle roughly ~100k tokens at once."
     )
+    if available_models:
+        model_list = ", ".join(available_models)
+        metadata_body += (
+            "\n\nThe optional `model=` argument of llm_query/llm_query_batched/rlm_query is "
+            f"restricted to these models ONLY: {model_list}. Passing any other model name will "
+            f"RAISE AN ERROR. Omit `model` (or pass model=None) to use the default, "
+            f"{available_models[0]} -- the same model as you."
+        )
     if root_prompt:
         metadata_prompt = f"Answer the following: {root_prompt}\n\n{metadata_body}"
     else:
