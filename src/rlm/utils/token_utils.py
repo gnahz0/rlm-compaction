@@ -47,11 +47,15 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
     "gemini-1.5-pro": 1_000_000,
     "gemini-1.5-flash": 1_000_000,
     "gemini-1.0-pro": 30_720,
-    # Qwen (Alibaba)
+    # Qwen (Alibaba). Local Qwen3 dense checkpoints ship a 40960-token window
+    # (max_position_embeddings) unless YaRN-extended; the *-14b/-8b keys reflect
+    # the real loaded-model limit, not the API-hosted variants.
     "qwen3-max": 256_000,
     "qwen3-72b": 128_000,
-    "qwen3-32b": 128_000,
-    "qwen3-8b": 32_768,
+    "qwen3-32b": 40_960,
+    "qwen3-14b": 40_960,
+    "qwen3-8b": 40_960,
+    "qwen3-4b": 40_960,
     "qwen3": 128_000,
     # Kimi (Moonshot)
     "kimi-k2.5": 262_000,
@@ -77,13 +81,16 @@ def get_context_limit(model_name: str) -> int:
     """
     if not model_name or model_name == "unknown":
         return DEFAULT_CONTEXT_LIMIT
-    exact = MODEL_CONTEXT_LIMITS.get(model_name)
+    # Case-insensitive: HF ids are mixed-case (e.g. "Qwen/Qwen3-14B") while the
+    # table keys are lowercase, so match on a lowercased name.
+    name = model_name.lower()
+    exact = MODEL_CONTEXT_LIMITS.get(name)
     if exact is not None:
         return exact
     best = 0
     best_limit = DEFAULT_CONTEXT_LIMIT
     for key, limit in MODEL_CONTEXT_LIMITS.items():
-        if key in model_name and len(key) > best:
+        if key in name and len(key) > best:
             best = len(key)
             best_limit = limit
     return best_limit
